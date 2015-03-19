@@ -115,6 +115,8 @@ void  OSInit (OS_ERR  *p_err)
 
     OS_RdyListInit();                                       /* Initialize the Ready List                              */
 
+    OS_EDFListInit();                                       /* Initialize the EDF List                                */
+
     OS_TaskInit(p_err);                                     /* Initialize the task manager                            */
     if (*p_err != OS_ERR_NONE) {
         return;
@@ -298,8 +300,23 @@ void  OSIntExit (void)
         return;
     }
 
+    /* Ready List produce TCB-to-be-run */
     OSPrioHighRdy   = OS_PrioGetHighest();                  /* Find highest priority                                  */
     OSTCBHighRdyPtr = OSRdyList[OSPrioHighRdy].HeadPtr;     /* Get highest priority task ready-to-run                 */
+    /* EDF List also produce TCB-to-be-run */
+    /* see os_cpu_a.asm:OS_CPU_PendSVHandler
+       ;              e) Get current high priority, OSPrioCur = OSPrioHighRdy;
+       ;              f) Get current ready thread TCB, OSTCBCurPtr = OSTCBHighRdyPtr;
+       So, we need to retain in using "OSPrioHighRdy" and "OSTCBHighRdyPtr" even from EDF.
+    */
+    // only produce from EDF List if the list is not empty
+    if ((&OSEDFList)->NbrEntries > (OS_OBJ_QTY)0u) {
+        if (OSPrioHighRdy > (OS_PRIO)OS_CFG_EDF_PRIO) { /* only if ">", not-">=", then EDF-Task come to play... */
+            OSPrioHighRdy = (OS_PRIO)OS_CFG_EDF_PRIO;
+            OSTCBHighRdyPtr = (&OSEDFList)->HeadPtr;
+        }
+    }
+    
     if (OSTCBHighRdyPtr == OSTCBCurPtr) {                   /* Current task still the highest priority?               */
         CPU_INT_EN();                                       /* Yes                                                    */
         return;
@@ -370,8 +387,23 @@ void  OSSched (void)
     }
 
     CPU_INT_DIS();
+    /* Ready List produce TCB-to-be-run */
     OSPrioHighRdy   = OS_PrioGetHighest();                  /* Find the highest priority ready                        */
     OSTCBHighRdyPtr = OSRdyList[OSPrioHighRdy].HeadPtr;
+    /* EDF List also produce TCB-to-be-run */
+    /* see os_cpu_a.asm:OS_CPU_PendSVHandler
+       ;              e) Get current high priority, OSPrioCur = OSPrioHighRdy;
+       ;              f) Get current ready thread TCB, OSTCBCurPtr = OSTCBHighRdyPtr;
+       So, we need to retain in using "OSPrioHighRdy" and "OSTCBHighRdyPtr" even from EDF.
+    */
+    // only produce from EDF List if the list is not empty
+    if ((&OSEDFList)->NbrEntries > (OS_OBJ_QTY)0u) {
+        if (OSPrioHighRdy > (OS_PRIO)OS_CFG_EDF_PRIO) { /* only if ">", not-">=", then EDF-Task come to play... */
+            OSPrioHighRdy = (OS_PRIO)OS_CFG_EDF_PRIO;
+            OSTCBHighRdyPtr = (&OSEDFList)->HeadPtr;
+        }
+    }
+
     if (OSTCBHighRdyPtr == OSTCBCurPtr) {                   /* Current task is still highest priority task?           */
         CPU_INT_EN();                                       /* Yes ... no need to context switch                      */
         return;
@@ -796,6 +828,7 @@ void  OS_IdleTaskInit (OS_ERR  *p_err)
                  (OS_TASK_PTR)OS_IdleTask,
                  (void       *)0,
                  (OS_PRIO     )(OS_CFG_PRIO_MAX - 1u),
+                 (OS_TICK     )0u,
                  (CPU_STK    *)OSCfg_IdleTaskStkBasePtr,
                  (CPU_STK_SIZE)OSCfg_IdleTaskStkLimit,
                  (CPU_STK_SIZE)OSCfg_IdleTaskStkSize,
@@ -2383,6 +2416,165 @@ void  OS_RdyListRemove (OS_TCB *p_tcb)
     }
     p_tcb->PrevPtr = (OS_TCB *)0;
     p_tcb->NextPtr = (OS_TCB *)0;
+}
+
+/*$PAGE*/
+/*
+************************************************************************************************************************
+*                                                    INITIALIZATION
+*                                               EDF LIST INITIALIZATION
+*
+* Description: This function is called by OSInit() to initialize the EDF list.  The EDF list contains a list of all
+*              the tasks that subject to EDF Scheduling Algorithm.
+*
+*              [TODO] more description...
+*
+*
+* Arguments  : none
+*
+* Returns    : none
+*
+* Note(s)    : This function is INTERNAL to uC/OS-III and your application should not call it.
+************************************************************************************************************************
+*/
+
+void  OS_EDFListInit (void)
+{
+    OS_EDF_LIST  *p_edf_list;
+    
+    
+    p_edf_list = &OSEDFList;
+    
+    p_edf_list->NbrEntries = (OS_OBJ_QTY)0;
+    p_edf_list->HeadPtr    = (OS_TCB *)0;
+    p_edf_list->TailPtr    = (OS_TCB *)0;
+
+}
+
+/*$PAGE*/
+/*
+************************************************************************************************************************
+*                                       INSERT TCB INTO EDF LIST IN APPROPRIATE LOCATION
+*
+* Description: Insert a TCB into EDF List in appropriate location.
+*
+*              [TODO] more description...
+*
+*
+* Arguments  : none
+*
+* Returns    : none
+*
+* Note(s)    : This function is INTERNAL to uC/OS-III and your application should not call it.
+************************************************************************************************************************
+*/
+void  OS_EDFListInsert (OS_TCB *p_tcb)
+{
+    OS_EDF_LIST *p_edf_list;
+    OS_TCB      *curr_node;
+    
+    p_edf_list = &OSEDFList;
+    
+    /* SEARCH for new location */
+    /* case- list is empty */
+    if (p_edf_list->NbrEntries == (OS_OBJ_QTY)0u) {
+        p_edf_list->HeadPtr = p_tcb;
+        p_edf_list->TailPtr = p_tcb;
+    }
+    /* case- shorter deadline than Head */
+    else if (p_tcb->Deadline < p_edf_list->HeadPtr->Deadline) {
+        curr_node = p_edf_list->HeadPtr; // node to be shifted (hm... not really "shift")
+        // do insert
+        curr_node->PrevPtr = p_tcb;
+        p_tcb->NextPtr = curr_node;
+        // adjust Head
+        p_edf_list->HeadPtr = p_tcb;
+    }
+    /* case- longer deadline than Tail */
+    else if (p_tcb->Deadline >= p_edf_list->TailPtr->Deadline) { /* IMPORTANT: ">=" in case new deadline is same as Tail deadline, since next "else {}" wouldnot be able to handle that */
+        curr_node = p_edf_list->TailPtr; // node-before p_tcb to be inserted
+        // do insert
+        curr_node->NextPtr = p_tcb;
+        p_tcb->PrevPtr = curr_node;
+        // adjust Tail
+        p_edf_list->TailPtr = p_tcb;
+    }
+    /* case- deadline in between Head and Tail, so Head unchange but Tail might be changed (if new deadline = tail deadline) */
+    else {
+        // search, until list's Deadline > p_tcb Deadline
+        curr_node = p_edf_list->HeadPtr; // start from Head
+        while (p_tcb->Deadline >= curr_node->Deadline) {
+            curr_node = curr_node->NextPtr;
+        }
+        // do insert, NOTE: since we check for <Head and >Tail,
+        //    so here we ensure 
+        p_tcb->NextPtr = curr_node;
+        p_tcb->PrevPtr = curr_node->PrevPtr; // regardless curr_node->PrevPtr value
+        curr_node->PrevPtr->NextPtr = p_tcb; // note: curr_node->PrevPtr guaranteed to be non-zero (as well as curr_node->NextPtr) ...
+                                             //     since we handle (1) new deadline < Head deadline, (2) new deadline >= Tail deadline, and (3) arrange FIFO.
+        curr_node->PrevPtr = p_tcb;
+    }
+    
+    // increase entries counter
+    p_edf_list->NbrEntries++;
+    
+}
+
+/*$PAGE*/
+/*
+************************************************************************************************************************
+*                                       REMOVE TCB FROM EDF LIST 
+*
+* Description: Remove a TCB from EDF List.
+*
+*              [TODO] more description...
+*
+*
+* Arguments  : none
+*
+* Returns    : none
+*
+* Note(s)    : This function is INTERNAL to uC/OS-III and your application should not call it.
+************************************************************************************************************************
+*/
+void  OS_EDFListRemove (OS_TCB *p_tcb)
+{
+    OS_EDF_LIST *p_edf_list;
+    
+    p_edf_list = &OSEDFList;
+    
+    /* SEARCH for the TCB location */
+    /* case- in Head */
+    if (p_tcb == p_edf_list->HeadPtr) {
+        // adjust Head
+        if (p_tcb->NextPtr == (OS_TCB *)0) { /* also Tail, i.e. NbrEntries=1 */
+            p_edf_list->TailPtr = (OS_TCB *)0;
+        }
+        p_edf_list->HeadPtr = p_tcb->NextPtr; // ->NextPtr can be zero or non-zero
+        // disconnect
+        p_tcb->NextPtr = (OS_TCB *)0; // PrevPtr already 0
+    }
+    /* case- in Tail */
+    else if (p_tcb == p_edf_list->TailPtr) {
+        // no need to check ->PrevPtr==0, since in that case must be p_tcb==Head
+        // adjust Tail
+        p_edf_list->TailPtr = p_tcb->PrevPtr; // ->PrevPtr guaranteed to be non-zero, see just above comment.
+        // disconnect
+        p_tcb->PrevPtr = (OS_TCB *)0; // NextPtr already 0
+    }
+    /* case- in between Head and Tail */
+    else {
+        // no need search, since we know already, and guaranteed to be in between 2 TCBs.
+        // disconnect
+        p_tcb->PrevPtr->NextPtr = p_tcb->NextPtr;
+        p_tcb->NextPtr->PrevPtr = p_tcb->PrevPtr;
+        p_tcb->NextPtr = (OS_TCB *)0;
+        p_tcb->PrevPtr = (OS_TCB *)0;        
+    }
+    
+    // decrement entries counter
+    p_edf_list->NbrEntries--;
+    
 }
 
 /*$PAGE*/

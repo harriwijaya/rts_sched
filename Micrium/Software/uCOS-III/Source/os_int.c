@@ -394,6 +394,7 @@ void  OS_IntQTaskInit (OS_ERR  *p_err)
                  (OS_TASK_PTR )OS_IntQTask,
                  (void       *)0,
                  (OS_PRIO     )0u,                          /* This task is ALWAYS at priority '0' (i.e. highest)     */
+                 (OS_TICK     )0u,
                  (CPU_STK    *)OSCfg_IntQTaskStkBasePtr,
                  (CPU_STK_SIZE)OSCfg_IntQTaskStkLimit,
                  (CPU_STK_SIZE)OSCfg_IntQTaskStkSize,

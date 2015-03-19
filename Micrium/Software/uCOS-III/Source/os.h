@@ -329,6 +329,7 @@ extern "C" {
 #define  OS_OPT_TASK_STK_CHK                 (OS_OPT)(0x0001u)  /* Enable stack checking for the task                 */
 #define  OS_OPT_TASK_STK_CLR                 (OS_OPT)(0x0002u)  /* Clear the stack when the task is create            */
 #define  OS_OPT_TASK_SAVE_FP                 (OS_OPT)(0x0004u)  /* Save the contents of any floating-point registers  */
+#define  OS_OPT_TASK_EDF                     (OS_OPT)(0x0008u)  /* Include the task in EDF Scheduling Algorithm       */
 
 /*
 ------------------------------------------------------------------------------------------------------------------------
@@ -637,6 +638,8 @@ typedef  struct  os_tcb              OS_TCB;
 
 typedef  struct  os_rdy_list         OS_RDY_LIST;
 
+typedef  struct  os_edf_list         OS_EDF_LIST;
+
 typedef  struct  os_tick_spoke       OS_TICK_SPOKE;
 
 typedef  void                      (*OS_TMR_CALLBACK_PTR)(void *p_tmr, void *p_arg);
@@ -693,6 +696,18 @@ struct  os_rdy_list {
     OS_OBJ_QTY           NbrEntries;                        /* Number of entries             at selected priority     */
 };
 
+
+/*
+------------------------------------------------------------------------------------------------------------------------
+*                                                      EDF LIST
+------------------------------------------------------------------------------------------------------------------------
+*/
+
+struct  os_edf_list {
+    OS_TCB              *HeadPtr;                           /* Pointer to task that will run i.e. shortest deadline   */
+    OS_TCB              *TailPtr;                           /* Pointer to last task i.e. longest deadline             */
+    OS_OBJ_QTY           NbrEntries;                        /* Number of TCB in the list              */
+};
 
 /*
 ------------------------------------------------------------------------------------------------------------------------
@@ -903,6 +918,7 @@ struct os_tcb {
 
     OS_STATE             TaskState;                         /* See OS_TASK_STATE_xxx                                  */
     OS_PRIO              Prio;                              /* Task priority (0 == highest)                           */
+    OS_TICK              Deadline;                          /* Task deadline */
     CPU_STK_SIZE         StkSize;                           /* Size of task stack (in number of stack elements)       */
     OS_OPT               Opt;                               /* Task options as passed by OSTaskCreate()               */
 
@@ -1115,6 +1131,8 @@ OS_EXT            OS_OBJ_QTY             OSQQty;                      /* Number 
                                                                       /* READY LIST --------------------------------- */
 OS_EXT            OS_RDY_LIST            OSRdyList[OS_CFG_PRIO_MAX];  /* Table of tasks ready to run                  */
 
+                                                                      /* EDF LIST ----------------------------------- */
+OS_EXT            OS_EDF_LIST            OSEDFList;                   /* Pointer to the TCB(s) opted-in for EDF that form a list */
 
 #ifdef OS_SAFETY_CRITICAL_IEC61508
 OS_EXT            CPU_BOOLEAN            OSSafetyCriticalStartFlag;   /* Flag indicating that all init. done          */
@@ -1575,6 +1593,7 @@ void          OSTaskCreate              (OS_TCB                *p_tcb,
                                          OS_TASK_PTR            p_task,
                                          void                  *p_arg,
                                          OS_PRIO                prio,
+                                         OS_TICK                deadline,
                                          CPU_STK               *p_stk_base,
                                          CPU_STK_SIZE           stk_limit,
                                          CPU_STK_SIZE           stk_size,
@@ -1998,6 +2017,14 @@ void          OS_RdyListInsertTail      (OS_TCB                *p_tcb);
 void          OS_RdyListMoveHeadToTail  (OS_RDY_LIST           *p_rdy_list);
 
 void          OS_RdyListRemove          (OS_TCB                *p_tcb);
+
+/* --------------------------------------------- EDF LIST MANAGEMENT ------------------------------------------------ */
+
+void          OS_EDFListInit            (void);
+
+void          OS_EDFListInsert          (OS_TCB                *p_tcb);
+
+void          OS_EDFListRemove          (OS_TCB                *p_tcb);
 
 /* ---------------------------------------------- PEND LIST MANAGEMENT ---------------------------------------------- */
 

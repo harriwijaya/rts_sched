@@ -424,6 +424,7 @@ void  OS_StatTaskInit (OS_ERR  *p_err)
                  (OS_TASK_PTR )OS_StatTask,
                  (void       *)0,
                  (OS_PRIO     )OSCfg_StatTaskPrio,
+                 (OS_TICK     )0u,
                  (CPU_STK    *)OSCfg_StatTaskStkBasePtr,
                  (CPU_STK_SIZE)OSCfg_StatTaskStkLimit,
                  (CPU_STK_SIZE)OSCfg_StatTaskStkSize,
